@@ -23,30 +23,30 @@ const (
 	ClusterManagerName                = "cluster-manager"
 	LabelApp                          = "app"
 	BootstrapSecretPrefix             = "bootstrap-token-"
-	HubClusterName="hub"
+	HubClusterName                    = "hub"
 )
 
 type Args struct {
-	kubeConfig *rest.Config
-	Schema *runtime.Scheme
-	Client client.Client
+	KubeConfig *rest.Config
+	Schema     *runtime.Scheme
+	Client     client.Client
 }
 
-func (a *Args) SetConfig(kconfig *rest.Config) error{
+func (a *Args) SetConfig(kconfig *rest.Config) error {
 	if kconfig != nil {
-		a.kubeConfig = kconfig
+		a.KubeConfig = kconfig
 		return nil
 	}
 	kubeConfig, err := config.GetConfig()
 	if err != nil {
 		return err
 	}
-	a.kubeConfig = kubeConfig
+	a.KubeConfig = kubeConfig
 	return nil
 }
 
 func (a *Args) SetClient() error {
-	if a.kubeConfig == nil {
+	if a.KubeConfig == nil {
 		err := a.SetConfig(nil)
 		if err != nil {
 			return err
@@ -57,7 +57,7 @@ func (a *Args) SetClient() error {
 		a.Schema = Scheme
 	}
 
-	newClient, err := client.New(a.kubeConfig, client.Options{Scheme: a.Schema})
+	newClient, err := client.New(a.KubeConfig, client.Options{Scheme: a.Schema})
 	if err != nil {
 		return err
 	}

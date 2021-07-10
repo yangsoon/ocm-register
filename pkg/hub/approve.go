@@ -3,21 +3,31 @@ package hub
 import (
 	"context"
 	"embed"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/klog/v2"
+	"fmt"
 	"strings"
 	"time"
 
+	"k8s.io/client-go/kubernetes"
+
 	"github.com/ghodss/yaml"
+	certificatesv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	clientcmdapiv1 "k8s.io/client-go/tools/clientcmd/api/v1"
+	"k8s.io/klog/v2"
+	ocmclusterv1 "open-cluster-management.io/api/cluster/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/yangsoon/ocm-register/pkg/common"
+)
+
+const (
+	clusterLabel = "open-cluster-management.io/cluster-name"
 )
 
 //go:embed resource
@@ -44,7 +54,7 @@ func NewHubCluster(schema *runtime.Scheme, config *rest.Config) (*Cluster, error
 	}, nil
 }
 
-func (c *Cluster) GetSpokeClusterKubeConfig(ctx context.Context, name string, ns string) (*rest.Config, string, error){
+func (c *Cluster) GetSpokeClusterKubeConfig(ctx context.Context, name string, ns string) (*rest.Config, string, error) {
 	// name: bootstrap-hub-kubeconfig
 	// ns: default
 
@@ -75,12 +85,15 @@ func (c *Cluster) GetSpokeClusterKubeConfig(ctx context.Context, name string, ns
 	}
 
 	spokeConfig, err := clientcmd.BuildConfigFromKubeconfigGetter("", kubeConfigGetter)
+	if err != nil {
+		return nil, clusterName, err
+	}
 	return spokeConfig, clusterName, nil
 }
 
 func (c *Cluster) GetHubClusterKubeConfig(ctx context.Context) (*clientcmdapiv1.Config, error) {
 	configMap := new(corev1.ConfigMap)
-	err := c.Client.Get(ctx, client.ObjectKey{Name: "cluster-info", Namespace: "kube-public"},configMap)
+	err := c.Client.Get(ctx, client.ObjectKey{Name: "cluster-info", Namespace: "kube-public"}, configMap)
 	if err != nil {
 		return nil, err
 	}
@@ -182,6 +195,123 @@ func (c *Cluster) GetHubUserToken(ctx context.Context) (string, error) {
 	return token, nil
 }
 
-func (c *Cluster) ApproveSpokeClusterCSR(clusterName string) error {
+func (c *Cluster) RegisterSpokeCluster(ctx context.Context, clusterName string) error {
+
+	// 1. approve csr
+	listOpts := []client.ListOption{
+		client.MatchingLabels{
+			clusterLabel: clusterName,
+		},
+	}
+	csrList := new(certificatesv1.CertificateSigningRequestList)
+	err := c.Client.List(ctx, csrList, listOpts...)
+	if err != nil {
+		klog.InfoS("Fail to get csr")
+		return err
+	}
+
+	if len(csrList.Items) != 1 {
+		return fmt.Errorf("csr number of csrList is wrong except: 1, actual: %d", len(csrList.Items))
+	}
+
+	csrName := csrList.Items[0].Name
+
+	csr := new(certificatesv1.CertificateSigningRequest)
+	err = c.Client.Get(ctx, client.ObjectKey{Name: csrName}, csr)
+	if err != nil {
+		return err
+	}
+
+	approved, denied := checkCsrStatus(&csr.Status)
+	if denied {
+		fmt.Printf("CSR %s already denied\n", csr.Name)
+		return nil
+	}
+	//if alreaady approved, then nothing to do
+	if approved {
+		fmt.Printf("CSR %s already approved\n", csr.Name)
+		return nil
+	}
+
+	if csr.Status.Conditions == nil {
+		csr.Status.Conditions = make([]certificatesv1.CertificateSigningRequestCondition, 0)
+	}
+
+	csr.Status.Conditions = append(csr.Status.Conditions, certificatesv1.CertificateSigningRequestCondition{
+		Status:         corev1.ConditionTrue,
+		Type:           certificatesv1.CertificateApproved,
+		Reason:         fmt.Sprintf("%sApprove", "ocm-register"),
+		Message:        fmt.Sprintf("This CSR was approved by %s certificate approve.", "ocm-register"),
+		LastUpdateTime: metav1.Now(),
+	})
+
+	clientset, err := kubernetes.NewForConfig(c.KubeConfig)
+	if err != nil {
+		klog.Error(err)
+		return err
+	}
+
+	signingRequest := clientset.CertificatesV1().CertificateSigningRequests()
+	if _, err = signingRequest.UpdateApproval(ctx, csr.Name, csr, metav1.UpdateOptions{}); err != nil {
+		return err
+	}
+
+	// 2. update managed cluster
+	mc := new(ocmclusterv1.ManagedCluster)
+	err = c.Client.Get(ctx, client.ObjectKey{Name: clusterName}, mc)
+	if err != nil {
+		klog.InfoS("Fail to get managedCluster", "obj", klog.KObj(mc))
+		return err
+	}
+
+	if !mc.Spec.HubAcceptsClient {
+		mc.Spec.HubAcceptsClient = true
+		return c.Client.Update(ctx, mc)
+	}
 	return nil
+}
+
+func (c *Cluster) Wait4SpokeClusterReady(ctx context.Context, clusterName string) (bool, error) {
+	listOpts := []client.ListOption{
+		client.MatchingLabels{
+			clusterLabel: clusterName,
+		},
+	}
+	csrList := new(certificatesv1.CertificateSigningRequestList)
+	mc := new(ocmclusterv1.ManagedCluster)
+
+	err := wait.PollImmediate(30*time.Second, 10*time.Minute, func() (done bool, err error) {
+		klog.Info(time.Now())
+		err = c.Client.List(ctx, csrList, listOpts...)
+		if err != nil {
+			klog.InfoS("Fail to get csr")
+			return false, err
+		}
+		if len(csrList.Items) < 1 {
+			return false, nil
+		}
+
+		err = c.Client.Get(ctx, client.ObjectKey{Name: clusterName}, mc)
+		if err != nil {
+			return false, nil
+		}
+		return true, nil
+	})
+
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func checkCsrStatus(status *certificatesv1.CertificateSigningRequestStatus) (approved bool, denied bool) {
+	for _, c := range status.Conditions {
+		if c.Type == certificatesv1.CertificateApproved {
+			approved = true
+		}
+		if c.Type == certificatesv1.CertificateDenied {
+			denied = true
+		}
+	}
+	return
 }
