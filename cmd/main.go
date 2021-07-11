@@ -63,4 +63,5 @@ func main() {
 		klog.Error(err, "Fail to approve spoke cluster")
 		os.Exit(1)
 	}
+	os.Exit(0)
 }

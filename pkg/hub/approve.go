@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/ghodss/yaml"
 	certificatesv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
@@ -227,33 +227,33 @@ func (c *Cluster) RegisterSpokeCluster(ctx context.Context, clusterName string) 
 		fmt.Printf("CSR %s already denied\n", csr.Name)
 		return nil
 	}
+
 	//if alreaady approved, then nothing to do
-	if approved {
+	if !approved {
 		fmt.Printf("CSR %s already approved\n", csr.Name)
-		return nil
-	}
 
-	if csr.Status.Conditions == nil {
-		csr.Status.Conditions = make([]certificatesv1.CertificateSigningRequestCondition, 0)
-	}
+		if csr.Status.Conditions == nil {
+			csr.Status.Conditions = make([]certificatesv1.CertificateSigningRequestCondition, 0)
+		}
 
-	csr.Status.Conditions = append(csr.Status.Conditions, certificatesv1.CertificateSigningRequestCondition{
-		Status:         corev1.ConditionTrue,
-		Type:           certificatesv1.CertificateApproved,
-		Reason:         fmt.Sprintf("%sApprove", "ocm-register"),
-		Message:        fmt.Sprintf("This CSR was approved by %s certificate approve.", "ocm-register"),
-		LastUpdateTime: metav1.Now(),
-	})
+		csr.Status.Conditions = append(csr.Status.Conditions, certificatesv1.CertificateSigningRequestCondition{
+			Status:         corev1.ConditionTrue,
+			Type:           certificatesv1.CertificateApproved,
+			Reason:         fmt.Sprintf("%sApprove", "ocm-register"),
+			Message:        fmt.Sprintf("This CSR was approved by %s certificate approve.", "ocm-register"),
+			LastUpdateTime: metav1.Now(),
+		})
 
-	clientset, err := kubernetes.NewForConfig(c.KubeConfig)
-	if err != nil {
-		klog.Error(err)
-		return err
-	}
+		clientset, err := kubernetes.NewForConfig(c.KubeConfig)
+		if err != nil {
+			klog.Error(err)
+			return err
+		}
 
-	signingRequest := clientset.CertificatesV1().CertificateSigningRequests()
-	if _, err = signingRequest.UpdateApproval(ctx, csr.Name, csr, metav1.UpdateOptions{}); err != nil {
-		return err
+		signingRequest := clientset.CertificatesV1().CertificateSigningRequests()
+		if _, err = signingRequest.UpdateApproval(ctx, csr.Name, csr, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
 	}
 
 	// 2. update managed cluster
