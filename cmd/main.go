@@ -30,7 +30,7 @@ func main() {
 	}
 
 	// 2. get spoke-cluster's kubeconfig from Secret
-	spokeConfig, clusterName, err := hubCluster.GetSpokeClusterKubeConfig(ctx, "bootstrap-hub-kubeconfig", "default")
+	spokeConfig, clusterName, err := hubCluster.GetSpokeClusterKubeConfig(ctx, spokeKubeSecretName, spokeKubeSecretNS)
 	if err != nil || spokeConfig == nil {
 		klog.InfoS("Fail to get spoke-cluster kubeconfig", "err", err)
 		os.Exit(1)
