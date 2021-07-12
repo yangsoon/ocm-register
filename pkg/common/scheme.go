@@ -1,7 +1,6 @@
 package common
 
 import (
-	certificatesv1 "k8s.io/api/certificates/v1"
 	crdv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -18,5 +17,4 @@ func init() {
 	_ = crdv1.AddToScheme(Scheme)
 	_ = ocmapiv1.Install(Scheme)
 	_ = ocmclusterv1.Install(Scheme)
-	_ = certificatesv1.AddToScheme(Scheme)
 }

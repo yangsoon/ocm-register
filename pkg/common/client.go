@@ -78,7 +78,7 @@ func ApplyK8sResource(ctx context.Context, f embed.FS, k8sClient client.Client, 
 			klog.Error(err, "Fail to unmarshal file", "name", file)
 			return err
 		}
-		err = createOrUpdateResource(ctx, k8sClient, k8sObject)
+		err = CreateOrUpdateResource(ctx, k8sClient, k8sObject)
 		if err != nil {
 			klog.InfoS("Fail to create resource", "object", klog.KObj(k8sObject), "apiVersion", k8sObject.GetAPIVersion(), "kind", k8sObject.GetKind())
 			return err
@@ -88,7 +88,7 @@ func ApplyK8sResource(ctx context.Context, f embed.FS, k8sClient client.Client, 
 	return nil
 }
 
-func createOrUpdateResource(ctx context.Context, k8sClient client.Client, resource *unstructured.Unstructured) error {
+func CreateOrUpdateResource(ctx context.Context, k8sClient client.Client, resource *unstructured.Unstructured) error {
 	objKey := client.ObjectKey{Name: resource.GetName(), Namespace: resource.GetNamespace()}
 	if err := k8sClient.Get(ctx, objKey, resource); err != nil {
 		if kerrors.IsNotFound(err) {

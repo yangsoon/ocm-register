@@ -55,9 +55,6 @@ func NewHubCluster(schema *runtime.Scheme, config *rest.Config) (*Cluster, error
 }
 
 func (c *Cluster) GetSpokeClusterKubeConfig(ctx context.Context, name string, ns string) (*rest.Config, string, error) {
-	// name: bootstrap-hub-kubeconfig
-	// ns: default
-
 	var clusterName string
 	secret := new(corev1.Secret)
 	err := c.Client.Get(ctx, client.ObjectKey{Name: name, Namespace: ns}, secret)
@@ -77,6 +74,8 @@ func (c *Cluster) GetSpokeClusterKubeConfig(ctx context.Context, name string, ns
 		if err != nil {
 			return nil, err
 		}
+
+		// convert *clientcmdapiv1.config to *clientcmdapi.config
 		spokeCmdConfig, err := clientcmd.Load(newData)
 		if err != nil {
 			return nil, err
@@ -84,6 +83,7 @@ func (c *Cluster) GetSpokeClusterKubeConfig(ctx context.Context, name string, ns
 		return spokeCmdConfig, nil
 	}
 
+	// convert *clientcmdapi.config to *rest.Config
 	spokeConfig, err := clientcmd.BuildConfigFromKubeconfigGetter("", kubeConfigGetter)
 	if err != nil {
 		return nil, clusterName, err
@@ -91,27 +91,31 @@ func (c *Cluster) GetSpokeClusterKubeConfig(ctx context.Context, name string, ns
 	return spokeConfig, clusterName, nil
 }
 
-func (c *Cluster) GetHubClusterKubeConfig(ctx context.Context) (*clientcmdapiv1.Config, error) {
+// GenerateHubClusterKubeConfig generate hub-cluster's kubeconfig for spoke-cluster
+func (c *Cluster) GenerateHubClusterKubeConfig(ctx context.Context) (*clientcmdapiv1.Config, error) {
+
+	// 1. get ca cert from configMap kube-public/cluster-info
 	configMap := new(corev1.ConfigMap)
-	err := c.Client.Get(ctx, client.ObjectKey{Name: "cluster-info", Namespace: "kube-public"}, configMap)
-	if err != nil {
+	if err := c.Client.Get(ctx, client.ObjectKey{Name: "cluster-info", Namespace: "kube-public"}, configMap); err != nil {
 		return nil, err
 	}
 	cofigMapData := configMap.Data["kubeconfig"]
+
 	kubeConfig := new(clientcmdapiv1.Config)
-	err = yaml.Unmarshal([]byte(cofigMapData), kubeConfig)
-	if err != nil {
+	if err := yaml.Unmarshal([]byte(cofigMapData), kubeConfig); err != nil {
 		return nil, err
 	}
+
+	// 2. get token for spoke-cluster
 	token, err := c.GetHubUserToken(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(kubeConfig.Clusters) != 1 {
-		return nil, err
+		klog.InfoS("the clusters num of kubeconfig was wrong", "expect", 1, "actual", len(kubeConfig.Clusters))
+		return nil, fmt.Errorf("the clusters num of kubeconfig was wrong expect %d actual %d", 1, len(kubeConfig.Clusters))
 	}
-
 	kubeConfig.Clusters[0].Name = common.HubClusterName
 	kubeConfig.Contexts = []clientcmdapiv1.NamedContext{
 		{
@@ -144,6 +148,7 @@ func (c *Cluster) GetHubUserToken(ctx context.Context) (string, error) {
 		"resource/bootstrap_sa.yaml",
 	}
 
+	// 1. create service account which grant related permissions to spoke-cluster
 	err := common.ApplyK8sResource(ctx, f, c.Client, files)
 	if err != nil {
 		return token, err
@@ -153,10 +158,11 @@ func (c *Cluster) GetHubUserToken(ctx context.Context) (string, error) {
 	serviceAccount := new(corev1.ServiceAccount)
 	secret := new(corev1.Secret)
 
+	// 2. wait for token ready
 	err = wait.PollImmediate(2*time.Second, 20*time.Second, func() (bool, error) {
 		err = c.Client.Get(ctx, saKey, serviceAccount)
 		if err != nil {
-			klog.Info("get sa error", "err", err)
+			klog.InfoS("Fail to get serviceAccount", "object", klog.KRef(saKey.Namespace, saKey.Name), "err", err)
 			return false, err
 		}
 		for _, objectRef := range serviceAccount.Secrets {
@@ -165,17 +171,15 @@ func (c *Cluster) GetHubUserToken(ctx context.Context) (string, error) {
 				return true, nil
 			}
 		}
-		klog.InfoS("fail to find secret token", "len(Secrets)", len(serviceAccount.Secrets))
+		klog.InfoS("Fail to find secret token")
 		return false, nil
 	})
-
 	if err != nil {
-		klog.InfoS("Fail to get secret", err)
 		return token, err
 	}
 
+	// 3. get secret token
 	secretKey := client.ObjectKey{Name: secretName, Namespace: common.OpenClusterManagementNamespace}
-
 	err = wait.PollImmediate(2*time.Second, 20*time.Second, func() (bool, error) {
 		err = c.Client.Get(ctx, secretKey, secret)
 		if err != nil {
@@ -191,7 +195,6 @@ func (c *Cluster) GetHubUserToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return token, err
 	}
-	klog.InfoS("secret", "type", secret.Type)
 	return token, nil
 }
 
@@ -228,7 +231,7 @@ func (c *Cluster) RegisterSpokeCluster(ctx context.Context, clusterName string) 
 		return nil
 	}
 
-	//if alreaady approved, then nothing to do
+	// if alreaady approved, then nothing to do
 	if !approved {
 		fmt.Printf("CSR %s already approved\n", csr.Name)
 
@@ -239,8 +242,8 @@ func (c *Cluster) RegisterSpokeCluster(ctx context.Context, clusterName string) 
 		csr.Status.Conditions = append(csr.Status.Conditions, certificatesv1.CertificateSigningRequestCondition{
 			Status:         corev1.ConditionTrue,
 			Type:           certificatesv1.CertificateApproved,
-			Reason:         fmt.Sprintf("%sApprove", "ocm-register"),
-			Message:        fmt.Sprintf("This CSR was approved by %s certificate approve.", "ocm-register"),
+			Reason:         fmt.Sprintf("%s Approve", "ocm-register-assistant "),
+			Message:        fmt.Sprintf("This CSR was approved by %s certificate approve.", "ocm-register-assistant"),
 			LastUpdateTime: metav1.Now(),
 		})
 
@@ -268,6 +271,7 @@ func (c *Cluster) RegisterSpokeCluster(ctx context.Context, clusterName string) 
 		mc.Spec.HubAcceptsClient = true
 		return c.Client.Update(ctx, mc)
 	}
+
 	return nil
 }
 
@@ -282,10 +286,10 @@ func (c *Cluster) Wait4SpokeClusterReady(ctx context.Context, clusterName string
 
 	startTime := time.Now()
 	err := wait.PollImmediate(30*time.Second, 10*time.Minute, func() (done bool, err error) {
-		klog.InfoS("Waiting for register request", "waitTime", time.Now().Sub(startTime))
+		klog.InfoS("Waiting for register request", "waitTime", time.Since(startTime))
 		err = c.Client.List(ctx, csrList, listOpts...)
 		if err != nil {
-			klog.InfoS("Fail to get csr")
+			klog.InfoS("Fail to get CertificateSigningRequestList")
 			return false, err
 		}
 		if len(csrList.Items) < 1 {

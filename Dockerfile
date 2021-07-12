@@ -12,4 +12,4 @@ FROM scratch as prod
 
 COPY --from=build /go/release/app /
 
-CMD ["/app"]
+ENTRYPOINT ["/app"]

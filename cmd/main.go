@@ -22,51 +22,55 @@ func main() {
 
 	ctx := context.Background()
 
+	// 1. connect to hub-cluster, which job(ocm-register-assistant) was deployed to
 	hubCluster, err := hub.NewHubCluster(common.Scheme, nil)
 	if err != nil {
-		klog.ErrorS(err, "Fail to connect hub cluster")
+		klog.InfoS("Fail to create client connect to hub cluster")
 		os.Exit(1)
 	}
 
+	// 2. get spoke-cluster's kubeconfig from Secret
 	spokeConfig, clusterName, err := hubCluster.GetSpokeClusterKubeConfig(ctx, "bootstrap-hub-kubeconfig", "default")
 	if err != nil || spokeConfig == nil {
-		klog.ErrorS(err, "Fail to get spoke cluster kubeconfig")
+		klog.InfoS("Fail to get spoke-cluster kubeconfig", "err", err)
 		os.Exit(1)
 	}
 
-	klog.Info("Prepare the User token for spoke-cluster")
-	hubKubeConfig, err := hubCluster.GetHubClusterKubeConfig(ctx)
+	klog.Info("generate the token for spoke-cluster to connect hub-cluster")
+	hubKubeConfig, err := hubCluster.GenerateHubClusterKubeConfig(ctx)
 	if err != nil {
-		klog.ErrorS(err, "Fail to get hub kubeconfig")
+		klog.InfoS("Fail to generate the token for spoke-cluster", "err", err)
 		os.Exit(1)
 	}
 
-	klog.InfoS("Prepare the Env for spoke-cluster....", "name", clusterName)
-
+	// 3. connect to spoke-cluster
 	spokeCluster, err := spoke.NewSpokeCluster(clusterName, common.Scheme, spokeConfig, hubKubeConfig)
 	if err != nil {
-		klog.ErrorS(err, "Fail to connect spoke cluster")
+		klog.InfoS("Fail to connect spoke cluster", "err", err)
 		os.Exit(1)
 	}
 
+	klog.InfoS("prepare the env for spoke-cluster", "name", clusterName)
 	err = spokeCluster.InitSpokeClusterEnv(ctx)
 	if err != nil {
-		klog.Error(err, "Fail to init spoke env")
+		klog.InfoS("Fail to prepare the env for spoke-cluster", "err", err)
 		os.Exit(1)
 	}
 
-	klog.Info("Waiting for spoke-cluster register request")
+	klog.Info("wait for spoke-cluster register request")
 	ready, err := hubCluster.Wait4SpokeClusterReady(ctx, clusterName)
 	if err != nil || !ready {
 		klog.Error(err, "Fail to waiting for register request")
 		os.Exit(1)
 	}
 
-	klog.Info("Approve spoke cluster csr")
+	klog.Info("approve spoke cluster csr")
 	err = hubCluster.RegisterSpokeCluster(ctx, spokeCluster.Name)
 	if err != nil {
 		klog.Error(err, "Fail to approve spoke cluster")
 		os.Exit(1)
 	}
+	klog.InfoS("successfully register cluster", "name", clusterName)
+
 	os.Exit(0)
 }

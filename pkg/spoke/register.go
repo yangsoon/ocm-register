@@ -5,9 +5,11 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"strings"
+	"text/template"
+
 	"github.com/Masterminds/sprig"
 	"github.com/ghodss/yaml"
-	"github.com/yangsoon/ocm-register/pkg/common"
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -16,8 +18,8 @@ import (
 	"k8s.io/klog/v2"
 	ocmapiv1 "open-cluster-management.io/api/operator/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"strings"
-	"text/template"
+
+	"github.com/yangsoon/ocm-register/pkg/common"
 )
 
 type Cluster struct {
@@ -28,7 +30,7 @@ type Cluster struct {
 
 type HubInfo struct {
 	KubeConfig *clientcmdapiv1.Config
-	APIServer string
+	APIServer  string
 }
 
 //go:embed resource
@@ -62,10 +64,10 @@ func NewSpokeCluster(name string, schema *runtime.Scheme, config *rest.Config, h
 	}
 	return &Cluster{
 		Name: name,
-		Args:args,
+		Args: args,
 		HubInfo: HubInfo{
 			KubeConfig: hubConfig,
-			APIServer: apiserver,
+			APIServer:  apiserver,
 		},
 	}, nil
 }
@@ -108,7 +110,7 @@ func (c *Cluster) InitSpokeClusterEnv(ctx context.Context) error {
 	return nil
 }
 
-func applyHubKubeConfig(ctx context.Context, client client.Client, file string, kubeConfig *clientcmdapiv1.Config) error {
+func applyHubKubeConfig(ctx context.Context, k8sClient client.Client, file string, kubeConfig *clientcmdapiv1.Config) error {
 	path := strings.Split(file, "/")
 	templateName := path[len(path)-1]
 	t, err := template.New(templateName).Funcs(sprig.TxtFuncMap()).ParseFS(f, file)
@@ -136,19 +138,20 @@ func applyHubKubeConfig(ctx context.Context, client client.Client, file string, 
 		return err
 	}
 
-	err = client.Create(ctx, kubeConfigSecret)
+	err = k8sClient.Get(ctx, client.ObjectKey{Namespace: kubeConfigSecret.Namespace, Name: kubeConfigSecret.Name}, kubeConfigSecret)
 	if err != nil {
-		if kerrors.IsAlreadyExists(err) {
-			klog.InfoS("Resource already exists", "object", klog.KObj(kubeConfigSecret))
-			return nil
+		if kerrors.IsNotFound(err) {
+			klog.InfoS("create secret", "object", klog.KObj(kubeConfigSecret))
+			return k8sClient.Create(ctx, kubeConfigSecret)
 		}
-		klog.Error(err)
 		return err
 	}
-	return nil
+
+	klog.InfoS("update secret", "object", klog.KObj(kubeConfigSecret))
+	return k8sClient.Update(ctx, kubeConfigSecret)
 }
 
-func applyKlusterlet(ctx context.Context, client client.Client, file string, cluster *Cluster) error {
+func applyKlusterlet(ctx context.Context, k8sClient client.Client, file string, cluster *Cluster) error {
 	t, err := template.ParseFS(f, file)
 	if err != nil {
 		klog.Error(err, "Fail to get Template from file", "name", file)
@@ -165,20 +168,18 @@ func applyKlusterlet(ctx context.Context, client client.Client, file string, clu
 	klusterlet := new(ocmapiv1.Klusterlet)
 	err = yaml.Unmarshal(buf.Bytes(), klusterlet)
 	if err != nil {
-		klog.Error(err, "Fail to Unmarshal Klusterlet")
+		klog.Error(err, "Fail to Unmarshal klusterlet")
 		return err
 	}
 
-	err = client.Create(ctx, klusterlet)
+	err = k8sClient.Get(ctx, client.ObjectKey{Name: klusterlet.Name, Namespace: klusterlet.Namespace}, klusterlet)
 	if err != nil {
-		if kerrors.IsAlreadyExists(err) {
-			klog.InfoS("Resource already exists", "object", klog.KObj(klusterlet))
-			return nil
+		if kerrors.IsNotFound(err) {
+			klog.InfoS("create klusterlet", "object", klog.KObj(klusterlet))
+			return k8sClient.Create(ctx, klusterlet)
 		}
-		klog.Error(err, "Fail to create klusterlet")
 		return err
 	}
-	return nil
+	klog.InfoS("update klusterlet", "object", klog.KObj(klusterlet))
+	return k8sClient.Update(ctx, klusterlet)
 }
-
-

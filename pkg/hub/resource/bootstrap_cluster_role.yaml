@@ -28,8 +28,8 @@ rules:
       - list
       - update
   - apiGroups:
-      - "cluster.open-cluster-management.io"
+      - cluster.open-cluster-management.io
     resources:
-      - "managedclustersets/join"
+      - managedclustersets/join
     verbs:
-      - "create"
+      - create
