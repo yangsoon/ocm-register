@@ -1,8 +1,7 @@
-# Copyright Contributors to the Open Cluster Management project
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: cluster-manager-job
+  name: ocm-register-assistant
 rules:
   - apiGroups:
       - ""
@@ -180,45 +179,40 @@ rules:
     resources:
       - signers
     resourceNames:
-      - kubernetes.io/kube-apiserver-client
+      - kubernetes.io/*
     verbs:
       - approve
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: cluster-manager-job
+  name: ocm-register-assistant
   namespace: open-cluster-management
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: cluster-manager-job
+  name: ocm-register-assistant
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cluster-manager-job
+  name: ocm-register-assistant
 subjects:
   - kind: ServiceAccount
-    name: cluster-manager-job
+    name: ocm-register-assistant
     namespace: open-cluster-management
 ---
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: batch/v1
+kind: Job
 metadata:
-  name: ocm-register-job
+  name: ocm-register-assistant
   namespace: open-cluster-management
 spec:
   template:
-    metadata:
-      labels:
-        ocm: "job"
     spec:
       containers:
         - name: register
-          image: yangsoon/ocm-register:v1
+          image: registry.cn-beijing.aliyuncs.com/ocm/register-assistant:v1
           imagePullPolicy: IfNotPresent
-      serviceAccountName: cluster-manager-job
-  selector:
-    matchLabels:
-      ocm: "job"
+      restartPolicy: OnFailure
+      serviceAccountName: ocm-register-assistant

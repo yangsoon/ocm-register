@@ -8,10 +8,10 @@ require (
 	github.com/Masterminds/sprig v2.22.0+incompatible
 	github.com/ghodss/yaml v1.0.0
 	github.com/huandu/xstrings v1.3.2 // indirect
-	github.com/k0kubun/go-ansi v0.0.0-20180517002512-3bf9e2903213
 	github.com/mitchellh/copystructure v1.2.0 // indirect
-	github.com/schollz/progressbar/v3 v3.8.2
+	golang.org/x/crypto v0.0.0-20210616213533-5ff15b29337e // indirect
 	golang.org/x/sys v0.0.0-20210630005230-0f9fa26af87c // indirect
+	golang.org/x/term v0.0.0-20210615171337-6886f2dfbf5b // indirect
 	k8s.io/api v0.21.2
 	k8s.io/apiextensions-apiserver v0.21.2
 	k8s.io/apimachinery v0.21.2

@@ -280,8 +280,9 @@ func (c *Cluster) Wait4SpokeClusterReady(ctx context.Context, clusterName string
 	csrList := new(certificatesv1.CertificateSigningRequestList)
 	mc := new(ocmclusterv1.ManagedCluster)
 
+	startTime := time.Now()
 	err := wait.PollImmediate(30*time.Second, 10*time.Minute, func() (done bool, err error) {
-		klog.Info(time.Now())
+		klog.InfoS("Waiting for register request", "waitTime", time.Now().Sub(startTime))
 		err = c.Client.List(ctx, csrList, listOpts...)
 		if err != nil {
 			klog.InfoS("Fail to get csr")
